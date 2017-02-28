@@ -1,0 +1,13 @@
+*.pyc
+*.egg-info
+
+# data
+*.txt
+*.out
+
+!requirements.txt
+
+bower_components
+node_modules
+build
+dist
