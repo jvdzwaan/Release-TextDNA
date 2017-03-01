@@ -17,17 +17,10 @@ import json
 import sys
 import os
 
-csv_path = sys.argv[1]
-
-# check to verify csv_path is to a file
-if not os.path.isfile(os.path.abspath(csv_path)):
-    print "Path ", csv_path, "not valid. Usage: {0} [csv_path]".format(__file__)
-    sys.exit(0)
-
-
 defaults = ["sequence", "word", "rank", "frequency", "groupedFrequency"]
 
 lastHeader = None
+
 
 # Aggregate function to create a list of sequences
 class ListSeqs:
@@ -43,6 +36,8 @@ class ListSeqs:
 
 # Rearrange data entry to conform to the expected order
 def rearrange(row, seqId, header):
+    # datapoint is: (word, seqence_id, rank, frequency, groupedFrequency)
+    # + added 'traits' ('Count' in case of word_sequence)
     datapoint = (row[header.index('word')].strip(), seqId, row[header.index('rank')], 0, "")
     for i in range(0, len(header)):
         if not header[i] in defaults:
@@ -52,17 +47,18 @@ def rearrange(row, seqId, header):
 
 # Parse a formatted N-Gram file
 def parseNgramFile(csvfile):
-    header = []
-    seqs = []
-    data =[]
+    header = []  # fields in database (data extracted, rank, etc.)
+    seqs = []  # list of (aggregated) text files
+    data = []
     seqIdx = 0
 
+    # TODO: store database in temporary file
     db = sqlite3.connect(csvfile.name + ".db")
     db.create_aggregate("listseqs", 1, ListSeqs)
     c = db.cursor()
 
     reader = csv.reader(csvfile, delimiter=',')
-    for row in reader:
+    for row in reader:  # do for header (not the data)
         if len(header) == 0:
             # Fetch the header
             header = map(str.strip, row)
@@ -86,8 +82,9 @@ def parseNgramFile(csvfile):
 
             db.commit()
 
-        else:
+        else:  # do for data (not the header)
             if not row[seqIdx].strip() in seqs:
+                # add data to sequences
                 c.execute("INSERT INTO sequences VALUES (?,?,?)", (str(len(seqs)), row[seqIdx].strip(), str(len(seqs))))
                 seqs.append(row[seqIdx].strip())
 
@@ -98,7 +95,9 @@ def parseNgramFile(csvfile):
     queryString = "(" + ("?, " * (len(row) + 2))[0:-2] + ")"
     c.executemany('INSERT INTO words VALUES ' + queryString, data)
 
-    # Darive the secondary params
+    # Derive the secondary params (frequency and groupedFrequency)
+    # Same as function composeSecondaryData
+    # Return a list of sequence ids for every word that occurs in the corpus
     c.execute("SELECT word, group_concat(seqId) FROM words GROUP BY word")
     for word in c.fetchall():
         gf = "0" * len(seqs)
@@ -114,6 +113,7 @@ def parseNgramFile(csvfile):
 
 
 # Build the secondary data
+# Function is not used in this script
 def composeSecondaryData(csvfile, numSeqs):
     # Compute the grouped frequency lists
     db = sqlite3.connect(csvfile.name + ".db")
@@ -132,6 +132,7 @@ def composeSecondaryData(csvfile, numSeqs):
     # Push updates to the table
     db.commit()
     db.close()
+
 
 # Pull down data from the database
 def fetchDataForDisplay(csvfile, header, orderBy):
@@ -166,6 +167,7 @@ def fetchDataForDisplay(csvfile, header, orderBy):
     db.close()
     return [maxs, mins, seqs, data]
 
+
 # Update the header to reflect the database schema
 def generateSchema(header):
     baseHeader = ["STRING word", "INT seqId", "INT rank", "INT frequency", "STRING groupedFrequency"]
@@ -176,6 +178,7 @@ def generateSchema(header):
     baseHeader.extend(modHeader)
     baseHeader.extend(["INT seqId", "STRING seqName", "INT seqOrder"])
     return baseHeader
+
 
 # Construct dataset -- takes in a file pointer, outputs a JSON dataset sorted according to the default params
 def build(fileptr):
@@ -195,20 +198,19 @@ def build(fileptr):
     dataset.extend(fetchDataForDisplay(fileptr, dataset[0], "rank"))
     print "formatted data in " + str(datetime.datetime.now() - startTime)
 
-    # Return the JSONified dataset
-    fname = "app/static/json/"+fileptr.name[len(os.path.abspath(__file__))-2:fileptr.name.rindex(".")] + ".json"
-    with open(fname, 'w') as outfile:
-        json.dump(dataset, outfile)
+    # Write the JSONified dataset to file
+    fname = os.path.splitext(os.path.basename(fileptr.name))[0]
+    jsonfile = "data/json/{}.json".format(fname)
+    with open(jsonfile, 'w') as outfile:
+        json.dump(dataset, outfile, indent=4)
 
-    # Put the dataset in the list (referenced by the filename)
-    updateList(fileptr.name[len(os.path.abspath(__file__))-2:fileptr.name.rindex(".")]);
+    return fname
+
 
 def updateList(fname):
     flag = "<ul>My Data:</ul>"
     with open("app/templates/list.html", "r") as f:
-        lines = f.readlines();
-        print lines
-        f.close()
+        lines = f.readlines()
 
         # Find the right line
         for idx in range(0, len(lines)):
@@ -224,131 +226,24 @@ def updateList(fname):
         f.close()
 
 
-
-
+# This function is not used
 def buildClientData(orderBy):
     startTime = datetime.datetime.now();
     dataset = [generateSchema(['sequence', 'word', 'rank', 'INTEGER count'])]
     dataset.extend(fetchDataForDisplay(dataset[0], orderBy))
-    return { "data" : dataset}
+    return {"data": dataset}
 
-build(open(os.path.abspath(csv_path)))
+if __name__ == '__main__':
+    csv_path = sys.argv[1]
 
-"""
-function processCSV(data) {
-    // First line is the labeling
-    var properties = trimArray(data[0].split(","));
-    buildPropertyArray(properties);
+    # check to verify csv_path is to a file
+    if not os.path.isfile(os.path.abspath(csv_path)):
+        print "Path {} not valid.\nUsage: {} [csv_path]".format(csv_path,
+                                                                __file__)
+        sys.exit(0)
 
-    var datatypes = trimArray(data[1].split(","));
-    buildDropdowns(properties, datatypes);
+    with open(os.path.abspath(csv_path)) as f:
+        fname = build(f)
 
-    sequences = {};
-    // TODO: Allow for flexible keying
-    var seqIdx = properties.indexOf("sequence");
-
-    // Build the sequence data into an associative array, keyed on sequence name, containing an array of data objects keyed on each property
-    for (var s = 2; s < data.length; s++) {
-        var dataArr = trimArray(data[s].split(","));
-
-        if (sequences[dataArr[seqIdx]] == undefined) {
-            sequences[dataArr[seqIdx]] = {"data":[]};
-            numSeqs++;
-        }
-
-        var element = {};
-
-        for (var d = 0; d < dataArr.length; d++){
-            element[properties[d]] = cast(dataArr[d], datatypes[d]);
-            if (properties[d] == "count") {
-                element[properties[d]] = Math.log(element[properties[d]]);
-            }
-            checkBounds(element[properties[d]], properties[d]);
-        }
-
-        sequences[dataArr[seqIdx]].data.push(element);
-    }
-
-    computeGF();
-}
-
-function cast(element, datatype) {
-    if (datatype == DATATYPE.INTEGER.name)
-        return parseInt(element);
-    else if (datatype == DATATYPE.NUMBER.name)
-        return parseFloat(element);
-    else
-        return element;
-}
-function checkBounds(data, prop) {
-    if (propertyBounds[prop].length == 0) {
-        propertyBounds[prop] = [data, data];
-    } else if (data < propertyBounds[prop][MIN]) {
-        propertyBounds[prop][MIN] = data;
-    } else if (data > propertyBounds[prop][MAX]) {
-        propertyBounds[prop][MAX] = data;
-    }
-}
-
-function normalize(data, prop) {
-    return (data - propertyBounds[prop][MIN]) / (propertyBounds[prop][MAX]-propertyBounds[prop][MIN]);
-}
-
-// Sort the elements and return new objects with x, y (set to 0), and c computed
-var layoutElements = function(data, w, h, xProp, cProp, blkW) {
-    // For now, just return rank and count
-    var blkGap = 5;
-    var layout = new Array();
-    var maxC = new Array();
-    var maxX = new Array();
-
-    // Strip out the ranks
-    for (var i = 0; i < data.length; i++) {
-        layout[i] = new Array();
-        maxC[i] = 0;
-        maxX[i] = 0;
-        for (var ortho in data[i]) {
-            var obj = data[i][ortho];
-            layout[i].push({'ortho': ortho, 'x': obj.rank, 'c': obj.count});
-
-            // Track the normalization terms
-            if (obj.count > maxC[i]) {
-                maxC[i] = obj.count;
-            }
-            if (obj.rank > maxX[i]) {
-                maxC[i] = obj.rank;
-            }
-        }
-
-        // Sort on the X parameter
-        layout[i].sort(function(a, b) {return a.x - b.x});
-    }
-
-    // Normalize the resulting values
-    for (var i = 0; i < data.length; i++) {
-        layout[i].map(function(x) {return {'x': (w / maxX[i]) * x.x, 'c': x.c / maxC[i], 'y': i}});
-
-        // Break things into blocks
-        var curLayout = layout[i].slice(0);
-        layout[i] = new Array();
-        var cutOff = 0;
-        var temp = new Array();
-        for (var j = 0; j < curLayout.length - 1; j++) {
-            temp.push(curLayout[j]);
-            if (curLayout[j] - curLayout[j + 1] < blkGap && curLayout[j] - cutOff < blkW) {
-                layout[i].push(temp);
-                temp = new Array();
-
-            }
-        }
-    }
-
-    return layout;
-};
-
-// Compute the Y value for a given sequence element
-var computeY = function(h, seqId, sequenceMapping, sequenceOrder) {
-    var hStep = h / (1.5 * sequenceMapping.length);
-    return h * 1.5 * sequenceOrder[[sequenceMapping[seqId]]];
-};
-"""
+    # Put the dataset in the list (referenced by the filename)
+    updateList(fname)
