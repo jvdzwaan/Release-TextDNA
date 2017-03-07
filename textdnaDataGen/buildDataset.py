@@ -16,6 +16,7 @@ import datetime
 import json
 import sys
 import os
+import tempfile
 
 defaults = ["sequence", "word", "rank", "frequency", "groupedFrequency"]
 
@@ -46,14 +47,13 @@ def rearrange(row, seqId, header):
 
 
 # Parse a formatted N-Gram file
-def parseNgramFile(csvfile):
+def parseNgramFile(csvfile, db_file_name):
     header = []  # fields in database (data extracted, rank, etc.)
     seqs = []  # list of (aggregated) text files
     data = []
     seqIdx = 0
 
-    # TODO: store database in temporary file
-    db = sqlite3.connect(csvfile.name + ".db")
+    db = sqlite3.connect(db_file_name)
     db.create_aggregate("listseqs", 1, ListSeqs)
     c = db.cursor()
 
@@ -114,9 +114,9 @@ def parseNgramFile(csvfile):
 
 # Build the secondary data
 # Function is not used in this script
-def composeSecondaryData(csvfile, numSeqs):
+def composeSecondaryData(csvfile, numSeqs, db_file_name):
     # Compute the grouped frequency lists
-    db = sqlite3.connect(csvfile.name + ".db")
+    db = sqlite3.connect(db_file_name)
     c = db.cursor()
     c.execute("SELECT word, group_concat(seqId) FROM words GROUP BY word")
 
@@ -135,8 +135,8 @@ def composeSecondaryData(csvfile, numSeqs):
 
 
 # Pull down data from the database
-def fetchDataForDisplay(csvfile, header, orderBy):
-    db = sqlite3.connect(csvfile.name + ".db")
+def fetchDataForDisplay(csvfile, header, orderBy, db_file_name):
+    db = sqlite3.connect(db_file_name)
     c = db.cursor()
     c.execute("SELECT * FROM words JOIN sequences WHERE words.seqId = sequences.id ORDER BY " + "rank" + " ASC")   #no idea if this works. shrug.
     tempData = c.fetchall()
@@ -182,12 +182,13 @@ def generateSchema(header):
 
 # Construct dataset -- takes in a file pointer, outputs a JSON dataset sorted according to the default params
 def build(fileptr):
+    db_file = tempfile.NamedTemporaryFile(delete=False)
     # Parse data from file
     startTime = datetime.datetime.now();
     if (fileptr.name[-3:] == "zip"):
         (header, seqs) = parseTextFile(fileptr)
     else:
-        (header, seqs) = parseNgramFile(fileptr)
+        (header, seqs) = parseNgramFile(fileptr, db_file.name)
 
     print("parsed file in " + str(datetime.datetime.now() - startTime))
     startTime = datetime.datetime.now()
@@ -195,7 +196,7 @@ def build(fileptr):
     # Add supplemental frequency data
     #rawData = composeSecondaryData(len(seqs))
     dataset = [generateSchema(header)]
-    dataset.extend(fetchDataForDisplay(fileptr, dataset[0], "rank"))
+    dataset.extend(fetchDataForDisplay(fileptr, dataset[0], "rank", db_file.name))
     print "formatted data in " + str(datetime.datetime.now() - startTime)
 
     # Write the JSONified dataset to file
@@ -203,6 +204,9 @@ def build(fileptr):
     jsonfile = "data/json/{}.json".format(fname)
     with open(jsonfile, 'w') as outfile:
         json.dump(dataset, outfile, indent=4)
+
+    db_file.close()
+    os.remove(db_file.name)
 
     return fname
 
