@@ -201,7 +201,7 @@ def build(fileptr):
 
     # Write the JSONified dataset to file
     fname = os.path.splitext(os.path.basename(fileptr.name))[0]
-    jsonfile = "data/json/{}.json".format(fname)
+    jsonfile = "{}.json".format(fname)
     with open(jsonfile, 'w') as outfile:
         json.dump(dataset, outfile, indent=4)
 
