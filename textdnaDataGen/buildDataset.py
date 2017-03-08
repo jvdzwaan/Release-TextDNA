@@ -250,4 +250,4 @@ if __name__ == '__main__':
         fname = build(f)
 
     # Put the dataset in the list (referenced by the filename)
-    updateList(fname)
+    #updateList(fname)
