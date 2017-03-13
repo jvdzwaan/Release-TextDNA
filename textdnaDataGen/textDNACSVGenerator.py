@@ -117,6 +117,7 @@ def textDNA(args):
     if bad_files != []:
         print("Unable to ngram the following files" + str(bad_files))
     f.close()
+    return path
 
 
 # adds one sequence's worth of ngrams
