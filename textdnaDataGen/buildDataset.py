@@ -200,8 +200,9 @@ def build(fileptr):
     print "formatted data in " + str(datetime.datetime.now() - startTime)
 
     # Write the JSONified dataset to file
-    fname = os.path.splitext(os.path.basename(fileptr.name))[0]
-    jsonfile = "{}.json".format(fname)
+    path, basename = os.path.split(fileptr.name)
+    fname = os.path.splitext(basename)[0]
+    jsonfile = os.path.join(path, "{}.json".format(fname))
     with open(jsonfile, 'w') as outfile:
         json.dump(dataset, outfile, indent=4)
 
